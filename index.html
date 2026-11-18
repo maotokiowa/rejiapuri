@@ -1,0 +1,1148 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <!-- ズーム操作を無効化し、誤作動を防ぐ（アクセシビリティ上の重要設定） -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>高等部祭 喫茶店レジ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 読み取り用ライブラリ -->
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <!-- QRコード生成用ライブラリ（日本語にも強い qrious に変更） -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+    <style>
+        /* タップ時のハイライトを無効化し、CSSでコントロールする */
+        * { -webkit-tap-highlight-color: transparent; }
+        
+        /* 巨大ボタンを押した時のへこむアニメーション */
+        .btn-active:active { transform: scale(0.95); transition: transform 0.1s; }
+        
+        /* スクロールバーのカスタマイズ（iPadでも見やすく） */
+        ::-webkit-scrollbar { width: 12px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 8px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        /* 全体のフォントを太く、視認性を高く */
+        body { font-family: 'Hiragino Kaku Gothic ProN', 'Meiryo', sans-serif; font-weight: bold; touch-action: manipulation; }
+
+        /* 印刷用のスタイル調整 */
+        @media print {
+            @page { size: A4 portrait; margin: 10mm; }
+            body { background: white; }
+            .print\:hidden { display: none !important; }
+            .print\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+            .print\:p-0 { padding: 0 !important; }
+            .print\:gap-8 { gap: 2rem !important; }
+            .print\:border-2 { border-width: 2px !important; }
+            .print\:scale-\[0\.85\] { transform: scale(0.85); transform-origin: top; }
+            .break-inside-avoid { break-inside: avoid; }
+            
+            /* 印刷時にスクロールバーを消し、すべて表示する */
+            #qr-container { overflow: visible !important; height: auto !important; }
+            #qr-screen { position: absolute !important; inset: 0 !important; display: block !important; }
+        }
+    </style>
+</head>
+<body class="bg-slate-100 h-screen w-screen overflow-hidden text-slate-800 select-none">
+
+    <!-- メイン画面（カートとスキャン） -->
+    <div id="main-screen" class="h-full flex flex-col">
+        <!-- ヘッダー -->
+        <header class="bg-blue-600 text-white p-4 flex justify-between items-center shadow-md">
+            <h1 class="text-3xl font-extrabold tracking-wider">☕️ 高等部祭 喫茶レジ</h1>
+            <div class="flex gap-4">
+                <button onclick="openSettings()" class="btn-active bg-white text-slate-800 px-6 py-3 rounded-xl text-xl border-4 border-transparent hover:border-slate-300 shadow-lg font-bold">
+                    ⚙️ 設定
+                </button>
+                <button onclick="openQRScreen()" class="btn-active bg-white text-slate-800 px-6 py-3 rounded-xl text-xl border-4 border-transparent hover:border-slate-300 shadow-lg font-bold">
+                    🖨 QRコード印刷
+                </button>
+                <button onclick="openHistory()" class="btn-active bg-white text-blue-600 px-6 py-3 rounded-xl text-xl border-4 border-transparent hover:border-blue-200 shadow-lg font-bold">
+                    📋 売上記録
+                </button>
+            </div>
+        </header>
+
+        <!-- メインコンテンツ（左右2カラム） -->
+        <div class="flex-1 flex overflow-hidden">
+            
+            <!-- 左側：カメラスキャン＆テストボタン -->
+            <div class="w-1/2 p-6 flex flex-col gap-6 border-r-4 border-slate-200 bg-white">
+                <div class="flex-1 flex flex-col gap-4">
+                    <h2 class="text-2xl text-center bg-slate-100 py-2 rounded-lg">📷 QRコード読み取り</h2>
+                    
+                    <!-- カメラ表示エリア -->
+                    <div id="reader" class="w-full bg-black rounded-2xl overflow-hidden shadow-inner flex-1 flex items-center justify-center min-h-[300px]">
+                        <!-- html5-qrcodeがここに挿入されます -->
+                        <span class="text-white text-xl">カメラを起動してください</span>
+                    </div>
+                    
+                    <div class="flex gap-4 h-20">
+                        <button id="btn-start-camera" onclick="startCamera()" class="btn-active flex-1 bg-green-500 text-white rounded-2xl text-2xl shadow-[0_8px_0_rgb(21,128,61)] active:translate-y-2 active:shadow-none transition-all">
+                            カメラ起動
+                        </button>
+                        <button id="btn-stop-camera" onclick="stopCamera()" class="btn-active flex-1 bg-slate-500 text-white rounded-2xl text-2xl shadow-[0_8px_0_rgb(71,85,105)] active:translate-y-2 active:shadow-none transition-all hidden">
+                            カメラ停止
+                        </button>
+                    </div>
+                </div>
+
+                <hr class="border-2 border-slate-200">
+
+                <!-- テスト用ボタン群（カメラが使えない時の代用） -->
+                <div class="flex-1 flex flex-col gap-4">
+                    <h2 class="text-2xl text-center bg-yellow-100 text-yellow-800 py-2 rounded-lg">👆 テスト用商品ボタン（QR代用）</h2>
+                    <div id="test-buttons-container" class="grid grid-cols-1 gap-4 flex-1 overflow-y-auto">
+                        <!-- JSで動的に生成されます -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右側：カート（注文リスト） -->
+            <div class="w-1/2 p-6 flex flex-col gap-4 bg-slate-50 relative">
+                <h2 class="text-2xl text-center bg-slate-200 py-2 rounded-lg">🛒 注文リスト</h2>
+                
+                <!-- カートリスト -->
+                <div id="cart-list" class="flex-1 overflow-y-auto flex flex-col gap-4 p-2">
+                    <!-- JSで動的に追加されます -->
+                    <div class="h-full flex items-center justify-center text-slate-400 text-2xl">
+                        商品がありません。QRをスキャンしてください。
+                    </div>
+                </div>
+
+                <!-- 合計金額と会計ボタン -->
+                <div class="bg-white p-6 rounded-3xl shadow-xl border-4 border-slate-200 mt-4">
+                    <div class="flex justify-between items-end mb-6">
+                        <span class="text-3xl text-slate-500">合計</span>
+                        <span id="cart-total" class="text-6xl font-black text-red-600">¥ 0</span>
+                    </div>
+                    <button onclick="startCheckout()" id="btn-checkout" disabled class="btn-active w-full bg-blue-600 text-white h-24 rounded-2xl text-4xl shadow-[0_10px_0_rgb(29,78,216)] active:translate-y-2 active:shadow-none transition-all disabled:opacity-50 disabled:bg-slate-400 disabled:shadow-none disabled:active:translate-y-0">
+                        お会計へ進む ➔
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- お会計画面（オーバーレイ） -->
+    <div id="checkout-screen" class="fixed inset-0 bg-green-100 z-50 hidden flex flex-col font-bold">
+        <div class="flex-1 flex w-full max-w-7xl mx-auto p-4 gap-4">
+            
+            <!-- 左側：サマリーと入力結果（画像左側風） -->
+            <div class="w-5/12 flex flex-col gap-2">
+                <!-- ごうけい -->
+                <div class="flex border-4 border-blue-500 rounded-xl overflow-hidden bg-white text-3xl">
+                    <div class="w-1/2 bg-blue-500 text-white flex items-center justify-center py-3">ごうけい</div>
+                    <div id="checkout-total" class="w-1/2 flex items-center justify-end pr-4 text-4xl">¥0</div>
+                </div>
+                <!-- おあずかり -->
+                <div class="flex border-4 border-blue-400 rounded-xl overflow-hidden bg-white text-3xl mt-2">
+                    <div class="w-1/2 bg-blue-400 text-white flex items-center justify-center py-3">おあずかり</div>
+                    <div id="checkout-received" class="w-1/2 flex items-center justify-end pr-4 text-4xl text-blue-700">¥0</div>
+                </div>
+
+                <!-- もらった おかね（並べるエリア） -->
+                <div class="flex flex-col mt-2 flex-1">
+                    <div class="bg-blue-400 text-white text-center py-2 text-2xl rounded-t-xl">もらった おかね</div>
+                    <div id="received-visuals" class="bg-white flex-1 border-4 border-t-0 border-blue-400 rounded-b-xl p-4 flex flex-wrap content-start gap-2 overflow-y-auto">
+                        <!-- ここにタップしたお金が並ぶ -->
+                    </div>
+                </div>
+
+                <!-- エラーメッセージ -->
+                <div id="checkout-error" class="text-red-500 text-2xl font-bold text-center h-8 opacity-0 transition-opacity">
+                    ⚠️ おかねが たりません
+                </div>
+
+                <!-- 下部ボタン -->
+                <div class="flex gap-4 mt-2 h-20">
+                    <button onclick="cancelCheckout()" class="btn-active w-1/2 bg-white text-blue-800 rounded-xl text-3xl border-4 border-blue-800 shadow-sm">
+                        もどる
+                    </button>
+                    <button onclick="calculateChange()" class="btn-active w-1/2 bg-blue-800 text-white rounded-xl text-3xl shadow-md active:translate-y-1">
+                        かいけい
+                    </button>
+                </div>
+            </div>
+
+            <!-- 右側：金種入力パネル（画像右側風） -->
+            <div class="w-7/12 bg-white rounded-xl border-4 border-blue-200 flex flex-col overflow-hidden">
+                <div class="bg-blue-400 text-white text-center py-3 text-3xl">もらったおかねは？</div>
+                
+                <div id="money-input-panel" class="flex-1 flex flex-col p-2 gap-2 overflow-y-auto bg-blue-50">
+                    <!-- JSでリアルなイラスト付きボタンが自動生成されます -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- おつり結果画面（オーバーレイ） -->
+    <div id="success-screen" class="fixed inset-0 bg-green-50 z-[60] hidden flex-col items-center justify-center p-10">
+        <h1 class="text-6xl font-extrabold text-green-800 mb-10">✅ お会計完了</h1>
+        
+        <div class="bg-white w-full max-w-4xl p-10 rounded-[3rem] shadow-2xl border-8 border-green-200 text-center mb-16">
+            <p class="text-4xl text-slate-500 mb-4">おつり</p>
+            <p id="success-change" class="text-[6rem] font-black text-red-600 leading-none tracking-tighter mb-8">
+                ¥ 0
+            </p>
+            <!-- 金種イラスト表示領域 -->
+            <div id="change-money-visual" class="flex flex-wrap justify-center items-center gap-4 min-h-[120px] bg-slate-50 p-6 rounded-3xl border-4 border-slate-100">
+                <!-- JSで金種が追加されます -->
+            </div>
+        </div>
+
+        <button onclick="resetRegister()" class="btn-active bg-blue-600 text-white w-full max-w-2xl h-32 rounded-3xl text-5xl shadow-[0_12px_0_rgb(29,78,216)] active:translate-y-3 active:shadow-none transition-all">
+            次の接客へ ➔
+        </button>
+    </div>
+
+    <!-- 売上記録モーダル -->
+    <div id="history-screen" class="fixed inset-0 bg-black/60 z-[70] hidden items-center justify-center p-10">
+        <div class="bg-white w-full max-w-5xl h-[80vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden">
+            <header class="bg-slate-800 text-white p-6 flex justify-between items-center">
+                <h2 class="text-4xl font-bold">📋 売上記録</h2>
+                <button onclick="closeHistory()" class="btn-active bg-slate-600 text-white px-6 py-3 rounded-xl text-2xl">
+                    ✖ 閉じる
+                </button>
+            </header>
+            
+            <div class="p-8 bg-blue-50 border-b-4 border-slate-200 flex justify-between items-center">
+                <span class="text-3xl text-slate-600 font-bold">全期間の総合売上</span>
+                <span id="history-grand-total" class="text-6xl font-black text-blue-700">¥ 0</span>
+            </div>
+
+            <div class="flex-1 overflow-y-auto p-8 bg-slate-100" id="history-container">
+                <!-- JSで日付ごとにグループ化されたテーブルを追加 -->
+            </div>
+            
+            <div class="p-6 bg-white text-right border-t-4 border-slate-200">
+                <button onclick="clearHistory()" class="btn-active bg-red-100 text-red-700 px-6 py-4 rounded-xl text-xl font-bold border-2 border-red-300">
+                    🗑 記録をすべてリセット
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- QRコード印刷用画面 -->
+    <div id="qr-screen" class="fixed inset-0 bg-white z-[80] hidden flex-col">
+        <header class="bg-slate-800 text-white p-6 flex justify-between items-center shadow-md print:hidden">
+            <h1 class="text-4xl font-extrabold">🖨 メニューQRコード（印刷用）</h1>
+            <div class="flex gap-4">
+                <button onclick="window.print()" class="btn-active bg-blue-500 text-white px-8 py-4 rounded-xl text-3xl shadow-lg border-4 border-transparent hover:border-blue-400 font-bold">
+                    🖨 印刷する
+                </button>
+                <button onclick="closeQRScreen()" class="btn-active bg-white text-slate-800 px-8 py-4 rounded-xl text-3xl shadow-lg border-4 border-transparent hover:border-slate-300 font-bold">
+                    ✖ 戻る
+                </button>
+            </div>
+        </header>
+        <div class="p-4 text-center text-xl text-slate-600 font-bold print:hidden">
+            「印刷する」ボタンを押して、この画面を印刷し、各テーブルに配置してください。
+        </div>
+        <div id="qr-container" class="flex-1 overflow-y-auto p-10 grid grid-cols-2 gap-10 print:grid-cols-2 print:p-0 print:gap-8 print:overflow-visible">
+            <!-- JSでQRコードを生成 -->
+        </div>
+    </div>
+
+    <!-- 設定モーダル（写真アップロード） -->
+    <div id="settings-screen" class="fixed inset-0 bg-slate-800/80 z-[90] hidden items-center justify-center p-10">
+        <div class="bg-white w-full max-w-5xl h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden">
+            <header class="bg-slate-800 text-white p-6 flex justify-between items-center">
+                <h2 class="text-4xl font-bold">⚙️ 設定（おかね・商品）</h2>
+                <button onclick="closeSettings()" class="btn-active bg-slate-600 text-white px-6 py-3 rounded-xl text-2xl font-bold">
+                    ✖ 閉じる
+                </button>
+            </header>
+            
+            <!-- タブボタン -->
+            <div class="flex bg-slate-200 p-2 gap-2">
+                <button id="tab-money" onclick="switchSettingsTab('money')" class="flex-1 py-4 text-3xl font-bold rounded-xl bg-white text-blue-700 shadow-sm border-2 border-blue-300">💰 おかねの写真</button>
+                <button id="tab-menu" onclick="switchSettingsTab('menu')" class="flex-1 py-4 text-3xl font-bold rounded-xl bg-slate-300 text-slate-600">☕️ 商品・メニュー</button>
+            </div>
+
+            <div class="p-4 bg-blue-50 border-b-4 border-slate-200 text-xl font-bold text-slate-700 leading-relaxed">
+                iPadの「写真」や「カメラ」から、イラストや写真をそのまま登録できます。<br>
+                <span class="text-red-600">※登録した情報はiPad本体に自動保存され、ずっと使えます。</span>
+            </div>
+
+            <!-- おかね設定パネル -->
+            <div class="flex-1 overflow-y-auto p-8 grid grid-cols-2 gap-6 bg-slate-100" id="settings-money-list">
+                <!-- JSで生成 -->
+            </div>
+
+            <!-- メニュー設定パネル -->
+            <div class="flex-1 overflow-y-auto p-8 flex-col gap-4 bg-slate-100 hidden" id="settings-menu-list">
+                <!-- JSで生成 -->
+            </div>
+            
+            <!-- フッター（おかね用） -->
+            <div class="p-6 bg-white border-t-4 border-slate-200 text-right" id="settings-footer-money">
+                <button onclick="resetAllImages()" class="btn-active bg-red-100 text-red-700 px-8 py-4 rounded-xl text-2xl font-bold border-2 border-red-300">
+                    🗑 おかねの写真をすべて初期化
+                </button>
+            </div>
+            
+            <!-- フッター（メニュー用） -->
+            <div class="p-6 bg-white border-t-4 border-slate-200 text-right hidden" id="settings-footer-menu">
+                <button onclick="addMenuItem()" class="btn-active bg-green-100 text-green-700 px-8 py-4 rounded-xl text-2xl font-bold border-2 border-green-300">
+                    ➕ 新しい商品を追加する
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- ファイル選択用（非表示） -->
+    <input type="file" id="image-uploader" accept="image/*" class="hidden" onchange="handleImageSelected(event)">
+
+    <!-- JavaScript ロジック -->
+    <script>
+        /* =========================================
+           1. データベースと状態管理
+        ========================================= */
+        let MENU_ITEMS = JSON.parse(localStorage.getItem('cafe_menu_items')) || [
+            { id: "coffee", name: "コーヒー", price: 200, image: "" },
+            { id: "tea", name: "紅茶", price: 200, image: "" },
+            { id: "cookie", name: "クッキー", price: 150, image: "" },
+            { id: "cake", name: "パウンドケーキ", price: 250, image: "" }
+        ];
+
+        let cart = []; // カートの中身 { id, name, price, qty, image }
+        let currentTotal = 0;
+        let receivedAmount = 0; 
+        
+        // 金種ごとの枚数を管理するオブジェクトを追加
+        let receivedCounts = {
+            10000: 0,
+            5000: 0,
+            1000: 0,
+            500: 0,
+            100: 0,
+            50: 0,
+            10: 0
+        };
+        
+        let html5QrCode = null;
+        let isCameraRunning = false;
+        let lastScannedId = "";
+        let lastScannedTime = 0;
+        let audioCtx = null; // 音声再生用コンテキスト
+
+        // 初期化時にテストボタンとQRコード、お金の入力パネルを生成
+        window.onload = function() {
+            initTestButtons();
+            initQRCodes();
+            initMoneyInputPanel(); // 追加：お金のパネルを生成
+        };
+
+        function initTestButtons() {
+            const container = document.getElementById('test-buttons-container');
+            let html = "";
+            MENU_ITEMS.forEach(item => {
+                const imgSrc = item.image || `https://placehold.co/100x100/f8fafc/334155?text=${encodeURIComponent(item.name.charAt(0))}`;
+                html += `
+                <button onclick="simulateScan('${item.id}')" class="btn-active bg-orange-50 border-4 border-orange-300 text-slate-800 rounded-2xl text-3xl shadow-md flex justify-between px-4 py-3 items-center">
+                    <div class="flex items-center gap-4">
+                        <img src="${imgSrc}" class="w-16 h-16 object-cover rounded-xl border-2 border-slate-200">
+                        <span class="font-bold">${item.name}</span>
+                    </div>
+                    <span class="font-black text-orange-700">${item.price}円</span>
+                </button>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        function initQRCodes() {
+            const container = document.getElementById('qr-container');
+            container.innerHTML = '';
+            MENU_ITEMS.forEach((item, index) => {
+                const qrDiv = document.createElement('div');
+                qrDiv.className = 'border-4 border-slate-800 rounded-3xl p-8 flex flex-col items-center justify-center bg-white print:border-2 print:p-4 break-inside-avoid';
+                
+                const title = document.createElement('h2');
+                title.className = 'text-5xl font-black mb-6 text-slate-800 print:text-4xl print:mb-4 flex items-center gap-4 justify-center';
+                
+                const imgSrc = item.image || `https://placehold.co/100x100/f8fafc/334155?text=${encodeURIComponent(item.name.charAt(0))}`;
+                title.innerHTML = `<img src="${imgSrc}" class="w-16 h-16 object-cover rounded-xl border-2 border-slate-200"> ${item.name}`;
+                
+                const price = document.createElement('p');
+                price.className = 'text-4xl font-bold mb-8 text-slate-600 print:text-3xl print:mb-6';
+                price.innerText = `${item.price}円`;
+                
+                const qrCanvas = document.createElement('canvas');
+                qrCanvas.id = `qrcode-${index}`;
+                qrCanvas.className = 'print:scale-[0.85] print:origin-top'; // 印刷時少し縮小
+                
+                qrDiv.appendChild(title);
+                qrDiv.appendChild(price);
+                qrDiv.appendChild(qrCanvas);
+                container.appendChild(qrDiv);
+                
+                // 長いデータの代わりに、短いIDだけをQRコードにする（模様が大きくなり読み取りやすくなる）
+                const qrValue = item.id;
+                
+                new QRious({
+                    element: qrCanvas,
+                    value: qrValue,
+                    size: 300,
+                    level: 'L' // エラー訂正レベル（余裕を持たせる）
+                });
+            });
+        }
+
+        function openQRScreen() {
+            document.getElementById('qr-screen').classList.remove('hidden');
+            document.getElementById('qr-screen').style.display = "flex";
+        }
+        
+        function closeQRScreen() {
+            document.getElementById('qr-screen').style.display = "";
+            document.getElementById('qr-screen').classList.add('hidden');
+        }
+
+        /* =========================================
+           ★ NEW: アプリ内で写真を設定する機能 ★
+        ========================================= */
+        let currentUploadType = ''; // 'money' or 'menu'
+        let currentUploadId = '';
+
+        function switchSettingsTab(tab) {
+            const tabMoneyBtn = document.getElementById('tab-money');
+            const tabMenuBtn = document.getElementById('tab-menu');
+            const listMoney = document.getElementById('settings-money-list');
+            const listMenu = document.getElementById('settings-menu-list');
+            const footerMoney = document.getElementById('settings-footer-money');
+            const footerMenu = document.getElementById('settings-footer-menu');
+
+            if (tab === 'money') {
+                tabMoneyBtn.className = "flex-1 py-4 text-3xl font-bold rounded-xl bg-white text-blue-700 shadow-sm border-2 border-blue-300";
+                tabMenuBtn.className = "flex-1 py-4 text-3xl font-bold rounded-xl bg-slate-300 text-slate-600";
+                listMoney.classList.remove('hidden');
+                listMoney.style.display = "grid";
+                listMenu.classList.add('hidden');
+                listMenu.style.display = "";
+                footerMoney.classList.remove('hidden');
+                footerMenu.classList.add('hidden');
+            } else {
+                tabMoneyBtn.className = "flex-1 py-4 text-3xl font-bold rounded-xl bg-slate-300 text-slate-600";
+                tabMenuBtn.className = "flex-1 py-4 text-3xl font-bold rounded-xl bg-white text-blue-700 shadow-sm border-2 border-blue-300";
+                listMoney.classList.add('hidden');
+                listMoney.style.display = "";
+                listMenu.classList.remove('hidden');
+                listMenu.style.display = "flex";
+                footerMoney.classList.add('hidden');
+                footerMenu.classList.remove('hidden');
+                renderMenuSettings();
+            }
+        }
+
+        function openSettings() {
+            const listEl = document.getElementById('settings-money-list');
+            const vals = [10000, 5000, 1000, 500, 100, 50, 10];
+            let html = '';
+            
+            vals.forEach(val => {
+                const currentImg = localStorage.getItem('money_img_' + val) || getDefaultImage(val);
+                html += `
+                <div class="border-4 border-slate-300 rounded-2xl p-6 flex flex-col items-center gap-4 bg-white shadow-sm">
+                    <div class="text-4xl font-black text-slate-700">${val}円</div>
+                    <img src="${currentImg}" class="h-32 object-contain bg-slate-50 rounded-lg p-2 border-2 border-slate-100" id="preview-money-${val}">
+                    <button onclick="triggerUpload('money', '${val}')" class="btn-active bg-blue-500 text-white w-full py-4 rounded-xl text-2xl font-bold shadow-md active:translate-y-1">
+                        📷 写真をえらぶ
+                    </button>
+                </div>
+                `;
+            });
+            
+            listEl.innerHTML = html;
+            switchSettingsTab('money'); // 初期タブをお金に設定
+            document.getElementById('settings-screen').classList.remove('hidden');
+            document.getElementById('settings-screen').style.display = 'flex';
+        }
+
+        function closeSettings() {
+            document.getElementById('settings-screen').style.display = '';
+            document.getElementById('settings-screen').classList.add('hidden');
+            initMoneyInputPanel(); // 変更された写真でレジ画面を再描画
+            initTestButtons(); // テストボタンも再描画
+            initQRCodes(); // QRコードも再描画
+            updateCartUI(); // カートの中身も再描画
+        }
+
+        function triggerUpload(type, id) {
+            currentUploadType = type;
+            currentUploadId = id;
+            document.getElementById('image-uploader').click(); // 非表示のファイル入力を起動
+        }
+
+        function handleImageSelected(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    // iPadの高画質カメラ画像で容量がいっぱいにならないよう、小さくリサイズして保存
+                    const canvas = document.createElement('canvas');
+                    const MAX_WIDTH = 400; // レジ画面には十分なサイズ
+                    let width = img.width;
+                    let height = img.height;
+                    
+                    if (width > MAX_WIDTH) {
+                        height = Math.round((height * MAX_WIDTH) / width);
+                        width = MAX_WIDTH;
+                    }
+                    
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+                    
+                    // JPEG形式で保存（容量削減）
+                    const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+                    
+                    if (currentUploadType === 'money') {
+                        localStorage.setItem('money_img_' + currentUploadId, dataUrl);
+                        document.getElementById('preview-money-' + currentUploadId).src = dataUrl;
+                    } else if (currentUploadType === 'menu') {
+                        const item = MENU_ITEMS.find(i => i.id === currentUploadId);
+                        if (item) {
+                            item.image = dataUrl;
+                            saveMenuItems();
+                            document.getElementById('preview-menu-' + currentUploadId).src = dataUrl;
+                        }
+                    }
+                    speak("保存しました");
+                }
+                img.src = e.target.result;
+            }
+            reader.readAsDataURL(file);
+            event.target.value = ''; // 連続で同じ画像を選べるようにリセット
+        }
+
+        function resetAllImages() {
+            const vals = [10000, 5000, 1000, 500, 100, 50, 10];
+            vals.forEach(val => localStorage.removeItem('money_img_' + val));
+            speak("おかねの写真を初期化しました");
+            openSettings(); // 画面を更新
+        }
+
+        // --- 商品（メニュー）設定のロジック ---
+        function renderMenuSettings() {
+            const container = document.getElementById('settings-menu-list');
+            let html = "";
+            MENU_ITEMS.forEach(item => {
+                const imgSrc = item.image || `https://placehold.co/200x200/f8fafc/334155?text=${encodeURIComponent(item.name.charAt(0))}`;
+                html += `
+                <div class="flex items-center gap-6 bg-white p-6 rounded-2xl border-4 border-slate-300 shadow-sm">
+                    <div class="flex flex-col items-center gap-2">
+                        <img src="${imgSrc}" id="preview-menu-${item.id}" class="w-32 h-32 object-cover rounded-xl border-2 border-slate-200">
+                        <button onclick="triggerUpload('menu', '${item.id}')" class="btn-active bg-blue-500 text-white px-4 py-2 rounded-lg text-lg font-bold shadow w-full">
+                            📷 写真
+                        </button>
+                    </div>
+                    <div class="flex-1 flex flex-col gap-4">
+                        <div class="flex items-center gap-4">
+                            <span class="text-2xl font-bold text-slate-500 w-24">なまえ</span>
+                            <input type="text" value="${item.name}" onchange="updateMenuData('${item.id}', 'name', this.value)" class="flex-1 border-4 border-slate-200 rounded-xl p-3 text-3xl font-bold text-slate-800 focus:border-blue-500 outline-none">
+                        </div>
+                        <div class="flex items-center gap-4">
+                            <span class="text-2xl font-bold text-slate-500 w-24">ねだん</span>
+                            <div class="flex-1 flex items-center gap-2">
+                                <input type="number" value="${item.price}" onchange="updateMenuData('${item.id}', 'price', this.value)" class="w-40 border-4 border-slate-200 rounded-xl p-3 text-3xl font-bold text-slate-800 text-right focus:border-blue-500 outline-none">
+                                <span class="text-3xl font-bold text-slate-700">円</span>
+                            </div>
+                        </div>
+                    </div>
+                    <button onclick="deleteMenuItem('${item.id}')" class="btn-active w-24 h-24 bg-red-100 text-red-600 rounded-xl border-4 border-red-300 text-4xl shadow-md flex items-center justify-center">
+                        🗑
+                    </button>
+                </div>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        function updateMenuData(id, field, value) {
+            const item = MENU_ITEMS.find(i => i.id === id);
+            if (item) {
+                if (field === 'price') {
+                    item[field] = parseInt(value) || 0;
+                } else {
+                    item[field] = value;
+                }
+                saveMenuItems();
+            }
+        }
+
+        function deleteMenuItem(id) {
+            if (confirm("この商品を削除しますか？")) {
+                MENU_ITEMS = MENU_ITEMS.filter(i => i.id !== id);
+                saveMenuItems();
+                renderMenuSettings();
+            }
+        }
+
+        function addMenuItem() {
+            const newId = "item_" + Date.now();
+            MENU_ITEMS.push({
+                id: newId,
+                name: "新しい商品",
+                price: 100,
+                image: ""
+            });
+            saveMenuItems();
+            renderMenuSettings();
+            
+            // 追加した後に下までスクロールさせる
+            setTimeout(() => {
+                const list = document.getElementById('settings-menu-list');
+                list.scrollTop = list.scrollHeight;
+            }, 100);
+        }
+
+        function saveMenuItems() {
+            localStorage.setItem('cafe_menu_items', JSON.stringify(MENU_ITEMS));
+        }
+
+        function getDefaultImage(val) {
+            if (val === 10000) return "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c8/Series_E_10000_Yen.jpg/400px-Series_E_10000_Yen.jpg";
+            if (val === 5000) return "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Series_E_5000_Yen.jpg/400px-Series_E_5000_Yen.jpg";
+            if (val === 1000) return "https://upload.wikimedia.org/wikipedia/commons/thumb/9/91/Series_E_1000_Yen.jpg/400px-Series_E_1000_Yen.jpg";
+            if (val === 500) return "https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/500JPY.JPG/200px-500JPY.JPG";
+            if (val === 100) return "https://upload.wikimedia.org/wikipedia/commons/thumb/2/25/100JPY.JPG/200px-100JPY.JPG";
+            if (val === 50) return "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b3/50JPY.JPG/200px-50JPY.JPG";
+            if (val === 10) return "https://upload.wikimedia.org/wikipedia/commons/thumb/4/41/10JPY.JPG/200px-10JPY.JPG";
+            return "";
+        }
+
+        /* =========================================
+           お金の画像を表示する共通関数（設定された写真を優先）
+        ========================================= */
+        function getMoneyImage(val, extraClass = "") {
+            const baseClass = "object-contain drop-shadow-md pointer-events-none " + extraClass;
+            // iPadに保存された写真があればそれを使用、なければデフォルト
+            let imgSrc = localStorage.getItem('money_img_' + val) || getDefaultImage(val);
+            return `<img src="${imgSrc}" class="${baseClass}" alt="${val}円" onerror="this.src='https://placehold.co/200x100/cccccc/333333?text=${val}円'">`;
+        }
+
+        // 入力パネル（右側）の初期化
+        function initMoneyInputPanel() {
+            const panel = document.getElementById('money-input-panel');
+            const bills = [10000, 5000, 1000];
+            const coins = [500, 100, 50, 10];
+            let html = '';
+            
+            bills.forEach(val => {
+                html += `
+                <div class="flex items-center bg-white rounded-xl border-2 border-blue-100 p-2 gap-4">
+                    <div class="w-24 text-center text-3xl"><span id="count-${val}">0</span>まい</div>
+                    <button onclick="changeMoneyCount(${val}, 1)" class="btn-active flex-1 flex justify-center py-1 bg-slate-50 rounded-lg hover:bg-slate-100 active:scale-95 transition-all">
+                        ${getMoneyImage(val, "w-48 h-20")}
+                    </button>
+                    <button onclick="changeMoneyCount(${val}, -1)" class="btn-active w-16 h-16 bg-red-500 text-white rounded-full text-4xl shadow-md border-4 border-white flex items-center justify-center hover:bg-red-400 active:scale-90 transition-all">➖</button>
+                </div>`;
+            });
+            
+            html += `<div class="grid grid-cols-2 gap-2 mt-2">`;
+            coins.forEach(val => {
+                html += `
+                <div class="flex items-center bg-white rounded-xl border-2 border-blue-100 p-2 gap-2">
+                    <div class="w-20 text-center text-2xl"><span id="count-${val}">0</span>まい</div>
+                    <button onclick="changeMoneyCount(${val}, 1)" class="btn-active flex-1 flex justify-center py-1 bg-slate-50 rounded-lg hover:bg-slate-100 active:scale-95 transition-all">
+                        ${getMoneyImage(val, "w-16 h-16")}
+                    </button>
+                    <button onclick="changeMoneyCount(${val}, -1)" class="btn-active w-12 h-12 bg-red-500 text-white rounded-full text-2xl shadow-md border-2 border-white flex items-center justify-center hover:bg-red-400 active:scale-90 transition-all">➖</button>
+                </div>`;
+            });
+            html += `</div>`;
+            
+            panel.innerHTML = html;
+        }
+
+        /* =========================================
+           2.5 効果音（ピッ！）機能
+        ========================================= */
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            // ユーザーの操作でオーディオを有効化する
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function playBeep() {
+            if (!audioCtx) initAudio();
+            try {
+                const osc = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                
+                osc.type = 'sine'; // 澄んだ電子音
+                osc.frequency.setValueAtTime(1500, audioCtx.currentTime); // やや高めの音
+                
+                // ★ ここを変更：音量を 0.1 から 1.0 (最大値) に引き上げ！
+                gainNode.gain.setValueAtTime(1.0, audioCtx.currentTime); 
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1); // 0.1秒でスッと消える
+                
+                osc.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.1);
+            } catch (e) {
+                console.error("Audio error:", e);
+            }
+        }
+
+        /* =========================================
+           2. 音声読み上げ（TTS）機能
+        ========================================= */
+        function speak(text) {
+            // ブラウザが音声合成に対応しているか確認
+            if ('speechSynthesis' in window) {
+                // 実行中の音声をキャンセルして新しく話す
+                window.speechSynthesis.cancel();
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.lang = 'ja-JP';
+                utterance.rate = 0.95; // 少しゆっくり、はっきりと
+                utterance.pitch = 1.1; // 少し高めの聞き取りやすい声
+                window.speechSynthesis.speak(utterance);
+            }
+        }
+
+        /* =========================================
+           3. QRカメラ機能 (html5-qrcode)
+        ========================================= */
+        async function startCamera() {
+            initAudio(); // カメラ起動時に音声エンジンの準備をしておく
+            if (isCameraRunning) return;
+            try {
+                // カメラの起動（背面カメラを優先）
+                html5QrCode = new Html5Qrcode("reader");
+                await html5QrCode.start(
+                    { facingMode: "environment" }, 
+                    // 枠をなくして、画面全体で広く読み取れるように変更
+                    { fps: 10 },
+                    onScanSuccess,
+                    onScanFailure
+                );
+                isCameraRunning = true;
+                document.getElementById('btn-start-camera').classList.add('hidden');
+                document.getElementById('btn-stop-camera').classList.remove('hidden');
+            } catch (err) {
+                console.error("Camera Error:", err);
+                alert("カメラの起動に失敗しました。iPadの設定でSafariからのカメラアクセスを許可してください。\n※テスト用ボタンで操作を続けることができます。");
+            }
+        }
+
+        async function stopCamera() {
+            if (!isCameraRunning || !html5QrCode) return;
+            try {
+                await html5QrCode.stop();
+                isCameraRunning = false;
+                document.getElementById('btn-start-camera').classList.remove('hidden');
+                document.getElementById('btn-stop-camera').classList.add('hidden');
+            } catch (err) {
+                console.error("Stop Camera Error:", err);
+            }
+        }
+
+        function onScanSuccess(decodedText) {
+            const now = Date.now();
+            // 連続スキャン防止（3秒間は同じコードを無視し、重複注文を防ぐ）
+            if (decodedText === lastScannedId && (now - lastScannedTime) < 3000) {
+                return;
+            }
+            
+            lastScannedId = decodedText;
+            lastScannedTime = now;
+
+            // スキャン成功時に「ピッ！」と鳴らす
+            playBeep();
+
+            simulateScan(decodedText);
+        }
+
+        function onScanFailure(error) {
+            // スキャン失敗時は何もしない（ログが出すぎないようにする）
+        }
+
+        /* =========================================
+           4. カート（注文）機能
+        ========================================= */
+        // テストボタン 兼 スキャン成功時の処理
+        function simulateScan(scannedText) {
+            initAudio(); // テストボタンからの実行用
+            try {
+                // 読み取ったIDからメニューを検索する
+                const item = MENU_ITEMS.find(i => i.id === scannedText);
+                
+                if (!item) {
+                    speak("登録されていないQRコードです");
+                    return;
+                }
+
+                // カートに追加または数量アップ（IDで判定）
+                const existingItem = cart.find(i => i.id === item.id);
+                if (existingItem) {
+                    existingItem.qty++;
+                } else {
+                    // imageも一緒にカートに入れる
+                    cart.push({ id: item.id, name: item.name, price: item.price, qty: 1, image: item.image });
+                }
+
+                // 音声フィードバック
+                speak(`${item.name}、${item.price}円`);
+                
+                updateCartUI();
+            } catch (e) {
+                console.error("QR Parse Error", e);
+                speak("QRコードの読み取りに失敗しました");
+            }
+        }
+
+        function changeQty(id, delta) {
+            const item = cart.find(i => i.id === id);
+            if (!item) return;
+
+            item.qty += delta;
+            if (item.qty <= 0) {
+                // 削除
+                cart = cart.filter(i => i.id !== id);
+                speak(`${item.name}を取り消しました`);
+            } else {
+                speak(`${item.name}、${item.qty}個`);
+            }
+            updateCartUI();
+        }
+
+        function removeItem(id) {
+            const item = cart.find(i => i.id === id);
+            if (item) {
+                cart = cart.filter(i => i.id !== id);
+                speak(`${item.name}を取り消しました`);
+                updateCartUI();
+            }
+        }
+
+        function updateCartUI() {
+            const listEl = document.getElementById('cart-list');
+            const totalEl = document.getElementById('cart-total');
+            const checkoutBtn = document.getElementById('btn-checkout');
+
+            if (cart.length === 0) {
+                listEl.innerHTML = `<div class="h-full flex items-center justify-center text-slate-400 text-2xl">商品がありません。QRをスキャンしてください。</div>`;
+                currentTotal = 0;
+                totalEl.innerText = "¥ 0";
+                checkoutBtn.disabled = true;
+                return;
+            }
+
+            let html = "";
+            currentTotal = 0;
+
+            cart.forEach(item => {
+                const subtotal = item.price * item.qty;
+                currentTotal += subtotal;
+                
+                const imgSrc = item.image || `https://placehold.co/100x100/f8fafc/334155?text=${encodeURIComponent(item.name.charAt(0))}`;
+
+                html += `
+                <div class="bg-white border-2 border-slate-200 rounded-2xl p-4 flex items-center justify-between shadow-sm">
+                    <div class="flex items-center gap-4">
+                        <img src="${imgSrc}" class="w-16 h-16 object-cover rounded-xl border-2 border-slate-200">
+                        <div class="flex flex-col">
+                            <span class="text-3xl font-bold">${item.name}</span>
+                            <span class="text-xl text-slate-500">@¥${item.price}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="flex items-center gap-4">
+                        <div class="bg-slate-100 rounded-xl flex items-center p-1 border-2 border-slate-200">
+                            <button onclick="changeQty('${item.id}', -1)" class="btn-active w-16 h-16 bg-white text-slate-800 rounded-lg text-4xl shadow flex items-center justify-center border border-slate-300">
+                                ➖
+                            </button>
+                            <span class="w-16 text-center text-4xl font-bold">${item.qty}</span>
+                            <button onclick="changeQty('${item.id}', 1)" class="btn-active w-16 h-16 bg-blue-100 text-blue-800 rounded-lg text-4xl shadow flex items-center justify-center border border-blue-300">
+                                ➕
+                            </button>
+                        </div>
+                        <button onclick="removeItem('${item.id}')" class="btn-active w-24 h-20 bg-red-100 text-red-600 border-2 border-red-300 rounded-xl text-2xl font-bold flex items-center justify-center shadow">
+                            取消
+                        </button>
+                    </div>
+                </div>
+                `;
+            });
+
+            listEl.innerHTML = html;
+            totalEl.innerText = `¥ ${currentTotal.toLocaleString()}`;
+            checkoutBtn.disabled = false;
+            
+            // カートの最下部にスクロール
+            listEl.scrollTop = listEl.scrollHeight;
+        }
+
+
+        /* =========================================
+           5. お会計（金種マッチング）機能
+        ========================================= */
+        function startCheckout() {
+            if (cart.length === 0) return;
+            
+            // 金種の枚数と合計をリセット
+            for (let key in receivedCounts) receivedCounts[key] = 0;
+            receivedAmount = 0;
+            
+            document.getElementById('checkout-total').innerText = `¥${currentTotal}`;
+            updateMoneyUI();
+            
+            document.getElementById('checkout-screen').classList.remove('hidden');
+            document.getElementById('checkout-error').style.opacity = "0";
+
+            speak(`合計は、${currentTotal}円です。もらったお金をタップしてください。`);
+        }
+
+        function cancelCheckout() {
+            document.getElementById('checkout-screen').classList.add('hidden');
+        }
+
+        // お金の枚数を増減する関数（新方式）
+        function changeMoneyCount(val, delta) {
+            document.getElementById('checkout-error').style.opacity = "0"; // エラー消去
+            
+            if (receivedCounts[val] + delta >= 0) {
+                receivedCounts[val] += delta;
+                playBeep(); // タップ音
+                updateMoneyUI();
+            }
+        }
+
+        function updateMoneyUI() {
+            // 現在の合計金額を再計算
+            receivedAmount = 0;
+            for (let key in receivedCounts) {
+                receivedAmount += parseInt(key) * receivedCounts[key];
+                // 右側の各行の「〇まい」を更新
+                const countEl = document.getElementById(`count-${key}`);
+                if (countEl) countEl.innerText = receivedCounts[key];
+            }
+
+            // 左側の「おあずかり」金額を更新
+            document.getElementById('checkout-received').innerText = `¥${receivedAmount}`;
+
+            // 左側の「もらった おかね」にイラストを並べる
+            const visualContainer = document.getElementById('received-visuals');
+            let html = "";
+            
+            // 大きい金額から順に描画
+            const sortedKeys = Object.keys(receivedCounts).map(Number).sort((a, b) => b - a);
+            
+            for (const val of sortedKeys) {
+                const count = receivedCounts[val];
+                for (let i = 0; i < count; i++) {
+                    if (val >= 1000) {
+                        html += getMoneyImage(val, "w-24 h-10 m-1");
+                    } else {
+                        html += getMoneyImage(val, "w-12 h-12 m-1");
+                    }
+                }
+            }
+            visualContainer.innerHTML = html;
+        }
+
+        function calculateChange() {
+            if (receivedAmount === 0 && currentTotal > 0) {
+                speak("お金を入力してください");
+                return;
+            }
+
+            const change = receivedAmount - currentTotal;
+
+            if (change < 0) {
+                // 金額不足
+                document.getElementById('checkout-error').style.opacity = "1";
+                speak("お金が足りません");
+                return;
+            }
+
+            // 成功：記録を保存
+            saveTransaction(currentTotal, receivedAmount, change);
+
+            // おつり画面を表示
+            document.getElementById('checkout-screen').classList.add('hidden');
+            document.getElementById('success-screen').classList.remove('hidden');
+            document.getElementById('success-screen').style.display = "flex";
+            
+            document.getElementById('success-change').innerText = `¥ ${change.toLocaleString()}`;
+            
+            // おつりを金種イラストで表示
+            renderChangeMoney(change);
+
+            if (change === 0) {
+                speak("ちょうどお預かりします。ありがとうございました。");
+            } else {
+                speak(`おつりは、${change}円です。ありがとうございました。`);
+            }
+        }
+
+        function renderChangeMoney(change) {
+            const container = document.getElementById('change-money-visual');
+            if (change === 0) {
+                container.innerHTML = '<span class="text-4xl text-slate-400 font-bold flex items-center h-full">おつりはありません</span>';
+                return;
+            }
+
+            const denoms = [
+                { val: 10000, type: 'bill' },
+                { val: 5000, type: 'bill' },
+                { val: 1000, type: 'bill' },
+                { val: 500, type: 'coin' },
+                { val: 100, type: 'coin' },
+                { val: 50, type: 'coin' },
+                { val: 10, type: 'coin' }
+            ];
+
+            let html = '';
+            let remaining = change;
+
+            for (const d of denoms) {
+                const count = Math.floor(remaining / d.val);
+                remaining %= d.val;
+
+                for (let i = 0; i < count; i++) {
+                    if (d.type === 'bill') {
+                        html += getMoneyImage(d.val, "w-32 h-16 m-2");
+                    } else {
+                        html += getMoneyImage(d.val, "w-16 h-16 m-2");
+                    }
+                }
+            }
+            container.innerHTML = html;
+        }
+
+        function resetRegister() {
+            cart = [];
+            currentTotal = 0;
+            receivedAmount = 0;
+            updateCartUI();
+            
+            document.getElementById('success-screen').style.display = "";
+            document.getElementById('success-screen').classList.add('hidden');
+        }
+
+        /* =========================================
+           6. 売上記録（ローカルストレージ）機能
+        ========================================= */
+        function saveTransaction(total, received, change) {
+            const history = JSON.parse(localStorage.getItem('cafeSalesHistory') || '[]');
+            
+            // カート内容の文字列化（記録用）
+            const itemsStr = cart.map(i => `${i.name}x${i.qty}`).join(", ");
+            
+            // 確実に YYYY/MM/DD の形式で日付を作る（並び替えやすくするため）
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            const dateStr = `${year}/${month}/${day}`; 
+
+            const record = {
+                date: dateStr,
+                time: now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }),
+                total: total,
+                items: itemsStr
+            };
+            
+            history.push(record);
+            localStorage.setItem('cafeSalesHistory', JSON.stringify(history));
+        }
+
+        function openHistory() {
+            const history = JSON.parse(localStorage.getItem('cafeSalesHistory') || '[]');
+            const containerEl = document.getElementById('history-container');
+            const totalEl = document.getElementById('history-grand-total');
+            
+            let html = "";
+            let grandTotal = 0;
+
+            // 日付ごとにグループ化する
+            const grouped = {};
+            history.forEach(r => {
+                const d = r.date || "以前の記録";
+                if (!grouped[d]) grouped[d] = [];
+                grouped[d].push(r);
+            });
+
+            // 日付が新しい順に並び替え
+            const sortedDates = Object.keys(grouped).sort((a, b) => {
+                if(a === "以前の記録") return 1;
+                if(b === "以前の記録") return -1;
+                return b.localeCompare(a); // 文字列の降順（新しい日が上）
+            });
+
+            sortedDates.forEach(date => {
+                const dayRecords = grouped[date];
+                let dailyTotal = 0;
+                let rowsHtml = "";
+
+                // 時間が新しい順に表示
+                [...dayRecords].reverse().forEach((record, index) => {
+                    dailyTotal += record.total;
+                    grandTotal += record.total;
+                    const bgClass = index % 2 === 0 ? "bg-white" : "bg-slate-50";
+                    rowsHtml += `
+                    <tr class="border-b border-slate-200 ${bgClass}">
+                        <td class="p-4 font-mono text-slate-500 w-24">${record.time}</td>
+                        <td class="p-4">${record.items}</td>
+                        <td class="p-4 text-right font-bold text-2xl w-40">¥${record.total.toLocaleString()}</td>
+                    </tr>
+                    `;
+                });
+
+                // 日付ごとのブロックを作成
+                html += `
+                <div class="mb-8 bg-white rounded-2xl shadow-sm border-2 border-slate-200 overflow-hidden">
+                    <div class="bg-blue-600 text-white p-4 flex justify-between items-center">
+                        <span class="text-3xl font-bold">📅 ${date}</span>
+                        <span class="text-3xl font-black text-yellow-300">日計: ¥${dailyTotal.toLocaleString()}</span>
+                    </div>
+                    <table class="w-full text-left border-collapse">
+                        <tbody class="text-xl">
+                            ${rowsHtml}
+                        </tbody>
+                    </table>
+                </div>
+                `;
+            });
+
+            if (history.length === 0) {
+                html = `<div class="p-8 text-center text-slate-400 text-2xl">まだ売上記録はありません</div>`;
+            }
+
+            containerEl.innerHTML = html;
+            totalEl.innerText = `¥ ${grandTotal.toLocaleString()}`;
+
+            document.getElementById('history-screen').classList.remove('hidden');
+            document.getElementById('history-screen').style.display = "flex";
+        }
+
+        function closeHistory() {
+            document.getElementById('history-screen').style.display = "";
+            document.getElementById('history-screen').classList.add('hidden');
+        }
+
+        function clearHistory() {
+            if (confirm("本当にすべての売上記録を削除しますか？\n（この操作は元に戻せません）")) {
+                localStorage.removeItem('cafeSalesHistory');
+                openHistory(); // 画面更新
+            }
+        }
+
+    </script>
+</body>
+</html>
