@@ -90,10 +90,10 @@
 
                 <hr class="border-2 border-slate-200">
 
-                <!-- テスト用ボタン群（カメラが使えない時の代用） -->
-                <div class="flex-1 flex flex-col gap-4">
-                    <h2 class="text-2xl text-center bg-yellow-100 text-yellow-800 py-2 rounded-lg">👆 テスト用商品ボタン（QR代用）</h2>
-                    <div id="test-buttons-container" class="grid grid-cols-1 gap-4 flex-1 overflow-y-auto">
+                <!-- 手動入力ボタン群（カメラが使えない時の代用） -->
+                <div class="flex-1 flex flex-col gap-4 bg-slate-50 p-2 rounded-2xl border-2 border-slate-200">
+                    <h2 class="text-2xl text-center bg-emerald-100 text-emerald-800 py-3 rounded-xl font-bold shadow-sm">👆 手動で追加する（QRが読めない時）</h2>
+                    <div id="test-buttons-container" class="grid grid-cols-1 gap-4 flex-1 overflow-y-auto p-2">
                         <!-- JSで動的に生成されます -->
                     </div>
                 </div>
@@ -721,10 +721,10 @@
             initAudio(); // カメラ起動時に音声エンジンの準備をしておく
             if (isCameraRunning) return;
             try {
-                // カメラの起動（背面カメラを優先）
+                // カメラの起動（内側・フロントカメラを優先するように変更）
                 html5QrCode = new Html5Qrcode("reader");
                 await html5QrCode.start(
-                    { facingMode: "environment" }, 
+                    { facingMode: "user" }, 
                     // 枠をなくして、画面全体で広く読み取れるように変更
                     { fps: 10 },
                     onScanSuccess,
